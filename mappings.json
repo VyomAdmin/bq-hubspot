@@ -1,0 +1,27 @@
+{
+  "contacts": {
+    "bq_email":           "email",
+    "bq_firstname":       "firstname",
+    "bq_lastname":        "lastname",
+    "bq_lifecycle_stage": "lifecyclestage",
+    "bq_mrr":             "hs_mrr_custom__c",
+    "bq_segment":         "customer_segment__c",
+    "bq_phone":           "phone",
+    "bq_company":         "company"
+  },
+  "companies": {
+    "bq_domain":          "domain",
+    "bq_company_name":    "name",
+    "bq_segment":         "segment__c",
+    "bq_arr":             "annualrevenue",
+    "bq_city":            "city",
+    "bq_country":         "country"
+  },
+  "deals": {
+    "bq_deal_name":       "dealname",
+    "bq_amount":          "amount",
+    "bq_close_date":      "closedate",
+    "bq_stage":           "dealstage",
+    "bq_pipeline":        "pipeline"
+  }
+}

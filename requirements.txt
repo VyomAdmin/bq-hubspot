@@ -1,0 +1,9 @@
+flask==3.1.0
+gunicorn==22.0.0
+google-cloud-bigquery==3.25.0
+google-cloud-secret-manager==2.20.0
+requests==2.32.3
+tenacity==9.0.0
+structlog==24.4.0
+pytest==8.3.3
+responses==0.25.3
