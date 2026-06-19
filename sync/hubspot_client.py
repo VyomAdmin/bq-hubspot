@@ -77,6 +77,62 @@ class HubSpotClient:
         return resp.json()
 
 
+    def search_deals_by_property(
+        self, property_name: str, values: list[str]
+    ) -> dict[str, str]:
+        """
+        Searches for deals where `property_name` is in `values`.
+        Returns {property_value: hubspot_deal_id}.
+        Uses CRM search API with an IN filter (up to 100 values per call).
+        """
+        self._throttle()
+        url = f"{HUBSPOT_BASE}/crm/v3/objects/deals/search"
+        payload = {
+            "filterGroups": [
+                {
+                    "filters": [
+                        {
+                            "propertyName": property_name,
+                            "operator": "IN",
+                            "values": values[:100],
+                        }
+                    ]
+                }
+            ],
+            "properties": [property_name],
+            "limit": 100,
+        }
+        resp = self.session.post(url, json=payload, timeout=30)
+
+        if resp.status_code == 429:
+            raise RateLimitError(retry_after=int(resp.headers.get("Retry-After", 10)))
+        if resp.status_code >= 500:
+            resp.raise_for_status()
+
+        result: dict[str, str] = {}
+        for item in resp.json().get("results", []):
+            prop_val = item.get("properties", {}).get(property_name)
+            if prop_val:
+                result[prop_val] = item["id"]
+        return result
+
+    def update_deal(self, deal_id: str, properties: dict[str, Any]) -> dict[str, Any]:
+        """
+        PATCH /crm/v3/objects/deals/{deal_id}
+        Updates a single deal. Raises RateLimitError on 429, HTTPError on 5xx.
+        """
+        self._throttle()
+        url = f"{HUBSPOT_BASE}/crm/v3/objects/deals/{deal_id}"
+        resp = self.session.patch(url, json={"properties": properties}, timeout=30)
+
+        if resp.status_code == 429:
+            raise RateLimitError(retry_after=int(resp.headers.get("Retry-After", 10)))
+        if resp.status_code >= 500:
+            resp.raise_for_status()
+
+        return resp.json()
+
+
 def make_retrying_batch_update(client: HubSpotClient):
     """
     Returns a callable with the same signature as HubSpotClient.batch_update
@@ -93,6 +149,26 @@ def make_retrying_batch_update(client: HubSpotClient):
     def _call(object_type: str, inputs: list[dict[str, Any]]) -> dict[str, Any]:
         try:
             return client.batch_update(object_type, inputs)
+        except RateLimitError as exc:
+            time.sleep(exc.retry_after)
+            raise
+
+    return _call
+
+
+def make_retrying_update_deal(client: HubSpotClient):
+    """Returns client.update_deal wrapped with tenacity retry."""
+
+    @retry(
+        retry=retry_if_exception_type((RateLimitError, requests.HTTPError)),
+        wait=wait_exponential(multiplier=2, min=2, max=60),
+        stop=stop_after_attempt(4),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )
+    def _call(deal_id: str, properties: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return client.update_deal(deal_id, properties)
         except RateLimitError as exc:
             time.sleep(exc.retry_after)
             raise

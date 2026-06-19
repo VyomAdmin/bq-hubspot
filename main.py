@@ -5,6 +5,7 @@ import structlog
 from flask import Flask, jsonify, request
 
 from sync.config import load_config
+from sync.invoice_runner import _seed_new_invoices, run_invoice_sync
 from sync.runner import run_sync
 
 # ---------------------------------------------------------------------------
@@ -42,6 +43,26 @@ def sync_handler():
         return jsonify({"status": "ok", **stats}), 200
     except Exception as exc:
         logging.exception("sync_run_failed")
+        return jsonify({"status": "error", "error": str(exc)}), 500
+
+
+@app.route("/sync/invoices", methods=["POST"])
+def invoice_sync_handler():
+    """
+    Triggered by Cloud Scheduler every 5 minutes.
+    Detects VO→WO and WO→IN transitions in invoices_unique_view and
+    pushes the corresponding updates to HubSpot deals.
+    """
+    from google.cloud import bigquery
+
+    cfg = load_config()
+    try:
+        bq = bigquery.Client(project=cfg.invoice_project)
+        _seed_new_invoices(bq, cfg)
+        stats = run_invoice_sync(cfg)
+        return jsonify({"status": "ok", **stats}), 200
+    except Exception as exc:
+        logging.exception("invoice_sync_run_failed")
         return jsonify({"status": "error", "error": str(exc)}), 500
 
 
