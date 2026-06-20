@@ -283,16 +283,17 @@ def _resolve_deal_ids(
 
 def _build_properties(transition: str, cfg: Config) -> dict[str, Any]:
     """Returns the HubSpot property payload for a given transition."""
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     if transition == TRANSITION_VO_WO:
         return {
             "dealstage": cfg.hs_won_stage,
             "pipeline": cfg.hs_deal_pipeline,
+            "bq_updated": f"WON - {now_iso}",
         }
     if transition == TRANSITION_WO_IN:
-        # HubSpot datetime properties expect millisecond epoch or ISO 8601
-        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         return {
             cfg.hs_install_completed_property: now_iso,
+            "bq_updated": f"Install Completed - {now_iso}",
         }
     raise ValueError(f"Unknown transition: {transition}")
 
