@@ -61,7 +61,7 @@ def run_invoice_sync(cfg: Config) -> dict[str, Any]:
     transitions = _resolve_deal_ids(transitions, hs, cfg)
 
     # 3. Process each transition
-    successes: list[str] = []
+    successes: list[tuple[str, str]] = []  # (invoice_id, bq_updated_value)
     failures: list[tuple[str, str, str]] = []  # (invoice_id, transition, error)
 
     for row in transitions:
@@ -78,7 +78,7 @@ def run_invoice_sync(cfg: Config) -> dict[str, Any]:
         try:
             properties = _build_properties(transition, cfg)
             retrying_update(deal_id, properties)
-            successes.append(invoice_id)
+            successes.append((invoice_id, properties["bq_updated"]))
             if transition == TRANSITION_VO_WO:
                 stats["vo_to_wo"] += 1
             else:
@@ -142,7 +142,7 @@ def _fetch_transitions(bq: bigquery.Client, cfg: Config) -> list[dict]:
 def _update_state(
     bq: bigquery.Client,
     cfg: Config,
-    successes: list[str],
+    successes: list[tuple[str, str]],
     failures: list[tuple[str, str, str]],
     transitions: list[dict],
 ) -> None:
@@ -156,28 +156,30 @@ def _update_state(
         return
 
     state = _fqt(cfg.invoice_project, cfg.invoice_dataset, cfg.invoice_state_table)
-    success_set = set(successes)
+    success_map = {iid: bq_updated for iid, bq_updated in successes}
     failure_map = {f[0]: f[2] for f in failures}
 
     # Build a temp update dataset
     rows: list[dict] = []
     for t in transitions:
         iid = t["invoice_id"]
-        if iid in success_set:
+        if iid in success_map:
             rows.append({
-                "id": iid,
+                "id": str(iid),
                 "new_status": t["current_status"],
                 "hubspot_deal_id": t.get("hubspot_deal_id"),
                 "last_sync_status": "SUCCESS",
                 "last_sync_error": None,
+                "bq_updated": success_map[iid],
             })
         elif iid in failure_map:
             rows.append({
-                "id": iid,
+                "id": str(iid),
                 "new_status": t["previous_status"],  # keep old status on failure
                 "hubspot_deal_id": t.get("hubspot_deal_id"),
                 "last_sync_status": "FAILED",
                 "last_sync_error": failure_map[iid][:1024],
+                "bq_updated": None,
             })
 
     if not rows:
@@ -190,6 +192,7 @@ def _update_state(
         bigquery.SchemaField("hubspot_deal_id", "STRING"),
         bigquery.SchemaField("last_sync_status", "STRING"),
         bigquery.SchemaField("last_sync_error", "STRING"),
+        bigquery.SchemaField("bq_updated", "STRING"),
     ]
     bq.load_table_from_json(
         rows, tmp,
@@ -206,7 +209,8 @@ def _update_state(
           T.hubspot_deal_id   = COALESCE(S.hubspot_deal_id, T.hubspot_deal_id),
           T.last_updated_at   = CURRENT_TIMESTAMP(),
           T.last_sync_status  = S.last_sync_status,
-          T.last_sync_error   = S.last_sync_error
+          T.last_sync_error   = S.last_sync_error,
+          T.bq_updated        = S.bq_updated
     """).result()
 
     try:
@@ -214,7 +218,7 @@ def _update_state(
     except Exception:
         logger.warning("Could not delete temp table %s", tmp)
 
-    logger.info("State updated: %d successes, %d failures", len(successes), len(failures))
+    logger.info("State updated: %d successes, %d failures", len(success_map), len(failures))
 
 
 def _seed_new_invoices(bq: bigquery.Client, cfg: Config) -> int:
