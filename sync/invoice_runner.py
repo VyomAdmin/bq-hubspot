@@ -287,9 +287,7 @@ def _resolve_deal_ids(
 
 def _build_properties(transition: str, cfg: Config) -> dict[str, Any]:
     """Returns the HubSpot property payload for a given transition."""
-    now = datetime.now(timezone.utc)
-    now_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    now_epoch_ms = int(now.timestamp() * 1000)
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     if transition == TRANSITION_VO_WO:
         return {
             "dealstage": cfg.hs_won_stage,
