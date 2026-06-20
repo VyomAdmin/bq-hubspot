@@ -116,6 +116,19 @@ class HubSpotClient:
                 result[prop_val] = item["id"]
         return result
 
+    def get_deal(self, deal_id: str, properties: list[str]) -> dict[str, Any]:
+        """
+        GET /crm/v3/objects/deals/{deal_id}
+        Returns the deal's current property values.
+        """
+        self._throttle()
+        url = f"{HUBSPOT_BASE}/crm/v3/objects/deals/{deal_id}"
+        resp = self.session.get(url, params={"properties": ",".join(properties)}, timeout=30)
+        if resp.status_code == 429:
+            raise RateLimitError(retry_after=int(resp.headers.get("Retry-After", 10)))
+        resp.raise_for_status()
+        return resp.json().get("properties", {})
+
     def update_deal(self, deal_id: str, properties: dict[str, Any]) -> dict[str, Any]:
         """
         PATCH /crm/v3/objects/deals/{deal_id}

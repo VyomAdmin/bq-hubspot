@@ -77,6 +77,20 @@ def run_invoice_sync(cfg: Config) -> dict[str, Any]:
 
         try:
             properties = _build_properties(transition, cfg)
+
+            # Skip if HubSpot already has the target value
+            if _already_synced(hs, deal_id, transition, properties, cfg):
+                logger.info(
+                    "deal_skipped invoice_id=%s deal_id=%s transition=%s — already up to date",
+                    invoice_id, deal_id, transition,
+                )
+                successes.append((invoice_id, properties["bq_updated"]))
+                if transition == TRANSITION_VO_WO:
+                    stats["vo_to_wo"] += 1
+                else:
+                    stats["wo_to_in"] += 1
+                continue
+
             retrying_update(deal_id, properties)
             successes.append((invoice_id, properties["bq_updated"]))
             if transition == TRANSITION_VO_WO:
@@ -283,6 +297,22 @@ def _resolve_deal_ids(
             t["hubspot_deal_id"] = resolved.get(str(t["invoice_id"]))
 
     return transitions
+
+
+def _already_synced(
+    hs: HubSpotClient, deal_id: str, transition: str, properties: dict, cfg: Config
+) -> bool:
+    """Returns True if HubSpot already has the target value for this transition."""
+    try:
+        if transition == TRANSITION_VO_WO:
+            current = hs.get_deal(deal_id, ["dealstage"])
+            return current.get("dealstage") == cfg.hs_won_stage
+        if transition == TRANSITION_WO_IN:
+            current = hs.get_deal(deal_id, [cfg.hs_install_completed_property])
+            return current.get(cfg.hs_install_completed_property) == properties[cfg.hs_install_completed_property]
+    except Exception as exc:
+        logger.warning("Could not fetch deal %s for idempotency check: %s", deal_id, exc)
+    return False
 
 
 def _build_properties(transition: str, cfg: Config) -> dict[str, Any]:
