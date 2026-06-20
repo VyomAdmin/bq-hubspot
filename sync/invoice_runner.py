@@ -260,7 +260,7 @@ def _resolve_deal_ids(
     if not need_lookup:
         return transitions
 
-    invoice_ids = [t["invoice_id"] for t in need_lookup]
+    invoice_ids = [str(t["invoice_id"]) for t in need_lookup]
     logger.info("Looking up %d deal IDs via HubSpot search", len(invoice_ids))
 
     # Search in chunks of 100 (HubSpot IN filter limit)
@@ -276,7 +276,7 @@ def _resolve_deal_ids(
     # Merge resolved IDs back into transition rows
     for t in transitions:
         if not t.get("hubspot_deal_id"):
-            t["hubspot_deal_id"] = resolved.get(t["invoice_id"])
+            t["hubspot_deal_id"] = resolved.get(str(t["invoice_id"]))
 
     return transitions
 
