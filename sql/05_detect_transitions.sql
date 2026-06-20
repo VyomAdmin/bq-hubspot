@@ -11,7 +11,7 @@ SELECT
 
   -- Transition label used by the runner to choose the HubSpot action
   CASE
-    WHEN s.last_known_status = 'VO' AND v.status = 'WO' THEN 'VO_TO_WO'
+    WHEN s.last_known_status = 'QO' AND v.status = 'WO' THEN 'QO_TO_WO'
     WHEN s.last_known_status = 'WO' AND v.status = 'IN' THEN 'WO_TO_IN'
   END                           AS transition,
 
@@ -22,7 +22,7 @@ FROM `psychic-lens-456414-e4.omega_stg.invoices_unique_view` v
 INNER JOIN `psychic-lens-456414-e4.omega_stg.invoice_sync_state` s
   ON v.id = s.id
 WHERE
-  (s.last_known_status = 'VO' AND v.status = 'WO')
+  (s.last_known_status = 'QO' AND v.status = 'WO')
   OR
   (s.last_known_status = 'WO' AND v.status = 'IN')
 

@@ -21,7 +21,7 @@ from sync.hubspot_client import HubSpotClient, make_retrying_update_deal
 
 logger = logging.getLogger(__name__)
 
-TRANSITION_VO_WO = "VO_TO_WO"
+TRANSITION_VO_WO = "QO_TO_WO"
 TRANSITION_WO_IN = "WO_TO_IN"
 
 
@@ -136,14 +136,14 @@ def _fetch_transitions(bq: bigquery.Client, cfg: Config) -> list[dict]:
           s.last_known_status AS previous_status,
           v.status            AS current_status,
           CASE
-            WHEN s.last_known_status = 'VO' AND v.status = 'WO' THEN '{TRANSITION_VO_WO}'
+            WHEN s.last_known_status = 'QO' AND v.status = 'WO' THEN '{TRANSITION_VO_WO}'
             WHEN s.last_known_status = 'WO' AND v.status = 'IN' THEN '{TRANSITION_WO_IN}'
           END                 AS transition,
           s.hubspot_deal_id
         FROM {view} v
         INNER JOIN {state} s ON CAST(v.id AS STRING) = s.id
         WHERE
-          (s.last_known_status = 'VO' AND v.status = 'WO')
+          (s.last_known_status = 'QO' AND v.status = 'WO')
           OR (s.last_known_status = 'WO' AND v.status = 'IN')
         ORDER BY v.id
     """
@@ -322,7 +322,7 @@ def _build_properties(transition: str, cfg: Config) -> dict[str, Any]:
         return {
             "dealstage": cfg.hs_won_stage,
             "pipeline": cfg.hs_deal_pipeline,
-            "bq_updated": f"WON - {now_iso}",
+            "bq_updated": f"WON (QO→WO) - {now_iso}",
         }
     if transition == TRANSITION_WO_IN:
         return {
