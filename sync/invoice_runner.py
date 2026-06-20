@@ -127,7 +127,7 @@ def _fetch_transitions(bq: bigquery.Client, cfg: Config) -> list[dict]:
           END                 AS transition,
           s.hubspot_deal_id
         FROM {view} v
-        INNER JOIN {state} s ON v.id = s.id
+        INNER JOIN {state} s ON CAST(v.id AS STRING) = s.id
         WHERE
           (s.last_known_status = 'VO' AND v.status = 'WO')
           OR (s.last_known_status = 'WO' AND v.status = 'IN')
@@ -229,13 +229,13 @@ def _seed_new_invoices(bq: bigquery.Client, cfg: Config) -> int:
     result = bq.query(f"""
         INSERT INTO {state} (id, last_known_status, first_seen_at, last_updated_at)
         SELECT
-          v.id,
+          CAST(v.id AS STRING),
           v.status,
           CURRENT_TIMESTAMP(),
           CURRENT_TIMESTAMP()
         FROM {view} v
         WHERE NOT EXISTS (
-          SELECT 1 FROM {state} s WHERE s.id = v.id
+          SELECT 1 FROM {state} s WHERE s.id = CAST(v.id AS STRING)
         )
     """).result()
 
