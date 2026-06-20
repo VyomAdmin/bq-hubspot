@@ -298,7 +298,7 @@ def _build_properties(transition: str, cfg: Config) -> dict[str, Any]:
         }
     if transition == TRANSITION_WO_IN:
         return {
-            cfg.hs_install_completed_property: now_epoch_ms,
+            cfg.hs_install_completed_property: "Install Completed",
             "bq_updated": f"Install Completed - {now_iso}",
         }
     raise ValueError(f"Unknown transition: {transition}")
