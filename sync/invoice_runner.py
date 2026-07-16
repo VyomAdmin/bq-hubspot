@@ -2,7 +2,8 @@
 Invoice status transition sync: BigQuery invoices_unique_view → HubSpot Deals.
 
 Detects two transitions every 5-minute poll:
-  VO → WO : set deal stage to WON  (pipeline 691581097, stage 1013210905)
+  VO → WO : set deal stage to the won-like stage of the deal's current pipeline
+            (see PIPELINE_WON_STAGES) — the pipeline itself is never changed
   WO → IN : set status_code__c = current UTC ISO timestamp (Install Completed)
 
 Deals are looked up via omega_job__c = invoices_unique_view.id.
@@ -23,6 +24,21 @@ logger = logging.getLogger(__name__)
 
 TRANSITION_VO_WO = "QO_TO_WO"
 TRANSITION_WO_IN = "WO_TO_IN"
+
+# Maps each HubSpot deal pipeline ID to its "won-like" deal stage ID.
+# A deal is moved to the won stage of whichever pipeline it currently sits
+# in — the pipeline itself is never changed.
+PIPELINE_WON_STAGES: dict[str, str] = {
+    "691581097": "1013210905",  # Viable Leads -> Won
+    "691607441": "1012054848",  # Effort Biz -> Won
+    "691580186": "1013086877",  # OS Previous Cust -> Won
+    "691576350": "1012052301",  # Previous Customer -> Won
+    "701637767": "1025031975",  # DNC (DO NOT CHANGE PIPELINE) -> Closed Won
+    "730668661": "1066072894",  # Email Only -> Closed Won
+    "741469619": "1078337966",  # DG&C -> Closed Won
+    "781108337": "1141341448",  # Dealer Kiosk -> Closed Won
+    "916011920": "1396335939",  # DGNC-OSA -> Closed Won
+}
 
 
 # ---------------------------------------------------------------------------
@@ -76,10 +92,27 @@ def run_invoice_sync(cfg: Config) -> dict[str, Any]:
             continue
 
         try:
-            properties = _build_properties(transition, cfg)
+            if transition == TRANSITION_VO_WO:
+                current = hs.get_deal(deal_id, ["pipeline", "dealstage"])
+                pipeline = current.get("pipeline")
+                won_stage = PIPELINE_WON_STAGES.get(pipeline)
+                if not won_stage:
+                    msg = f"Unknown pipeline {pipeline!r} for deal {deal_id} — no won stage mapping"
+                    logger.warning(
+                        "deal_pipeline_unmapped invoice_id=%s deal_id=%s pipeline=%s",
+                        invoice_id, deal_id, pipeline,
+                    )
+                    failures.append((invoice_id, transition, msg))
+                    continue
+
+                properties = _build_properties(transition, cfg, won_stage=won_stage)
+                already_synced = current.get("dealstage") == won_stage
+            else:
+                properties = _build_properties(transition, cfg)
+                already_synced = _already_synced(hs, deal_id, transition, properties, cfg)
 
             # Skip if HubSpot already has the target value
-            if _already_synced(hs, deal_id, transition, properties, cfg):
+            if already_synced:
                 logger.info(
                     "deal_skipped invoice_id=%s deal_id=%s transition=%s — already up to date",
                     invoice_id, deal_id, transition,
@@ -302,11 +335,12 @@ def _resolve_deal_ids(
 def _already_synced(
     hs: HubSpotClient, deal_id: str, transition: str, properties: dict, cfg: Config
 ) -> bool:
-    """Returns True if HubSpot already has the target value for this transition."""
+    """Returns True if HubSpot already has the target value for this transition.
+
+    Only used for TRANSITION_WO_IN — TRANSITION_VO_WO is checked inline since it
+    needs the deal's current pipeline to resolve the target won stage.
+    """
     try:
-        if transition == TRANSITION_VO_WO:
-            current = hs.get_deal(deal_id, ["dealstage"])
-            return current.get("dealstage") == cfg.hs_won_stage
         if transition == TRANSITION_WO_IN:
             current = hs.get_deal(deal_id, [cfg.hs_install_completed_property])
             return current.get(cfg.hs_install_completed_property) == properties[cfg.hs_install_completed_property]
@@ -315,13 +349,15 @@ def _already_synced(
     return False
 
 
-def _build_properties(transition: str, cfg: Config) -> dict[str, Any]:
+def _build_properties(
+    transition: str, cfg: Config, won_stage: str | None = None
+) -> dict[str, Any]:
     """Returns the HubSpot property payload for a given transition."""
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     if transition == TRANSITION_VO_WO:
+        # Pipeline is deliberately omitted — the deal stays in its current pipeline.
         return {
-            "dealstage": cfg.hs_won_stage,
-            "pipeline": cfg.hs_deal_pipeline,
+            "dealstage": won_stage,
             "bq_updated": f"WON (QO→WO) - {now_iso}",
         }
     if transition == TRANSITION_WO_IN:

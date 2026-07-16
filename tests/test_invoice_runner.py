@@ -33,9 +33,9 @@ BASE_CFG = Config(
 # ---------------------------------------------------------------------------
 
 def test_build_properties_vo_to_wo():
-    props = _build_properties(TRANSITION_VO_WO, BASE_CFG)
+    props = _build_properties(TRANSITION_VO_WO, BASE_CFG, won_stage="1013210905")
     assert props["dealstage"] == "1013210905"
-    assert props["pipeline"] == "691581097"
+    assert "pipeline" not in props  # pipeline is retained, never overwritten
 
 
 def test_build_properties_wo_to_in():
@@ -123,9 +123,13 @@ def test_run_invoice_sync_no_transitions():
 def test_run_invoice_sync_vo_to_wo_success():
     transition = _make_transition("INV-1", TRANSITION_VO_WO)
     mock_update_fn = MagicMock(return_value={"id": "deal-1"})
+    mock_hs_instance = MagicMock()
+    mock_hs_instance.get_deal.return_value = {
+        "pipeline": "691581097", "dealstage": "some_earlier_stage"
+    }
 
     with patch("sync.invoice_runner.bigquery.Client"), \
-         patch("sync.invoice_runner.HubSpotClient"), \
+         patch("sync.invoice_runner.HubSpotClient", return_value=mock_hs_instance), \
          patch("sync.invoice_runner.make_retrying_update_deal", return_value=mock_update_fn), \
          patch("sync.invoice_runner._fetch_transitions", return_value=[transition]), \
          patch("sync.invoice_runner._resolve_deal_ids", return_value=[transition]), \
@@ -137,10 +141,58 @@ def test_run_invoice_sync_vo_to_wo_success():
     assert stats["successes"] == 1
     assert stats["failures"] == 0
 
-    # Verify the correct properties were sent
+    # Verify the correct properties were sent, and the pipeline was retained (not overwritten)
     call_args = mock_update_fn.call_args
     assert call_args[0][0] == "deal-1"
     assert call_args[0][1]["dealstage"] == "1013210905"
+    assert "pipeline" not in call_args[0][1]
+
+
+def test_run_invoice_sync_vo_to_wo_retains_non_default_pipeline():
+    """A deal in a different pipeline (e.g. Effort Biz) gets that pipeline's won stage."""
+    transition = _make_transition("INV-1b", TRANSITION_VO_WO)
+    mock_update_fn = MagicMock(return_value={"id": "deal-1"})
+    mock_hs_instance = MagicMock()
+    mock_hs_instance.get_deal.return_value = {
+        "pipeline": "691607441", "dealstage": "some_earlier_stage"  # Effort Biz
+    }
+
+    with patch("sync.invoice_runner.bigquery.Client"), \
+         patch("sync.invoice_runner.HubSpotClient", return_value=mock_hs_instance), \
+         patch("sync.invoice_runner.make_retrying_update_deal", return_value=mock_update_fn), \
+         patch("sync.invoice_runner._fetch_transitions", return_value=[transition]), \
+         patch("sync.invoice_runner._resolve_deal_ids", return_value=[transition]), \
+         patch("sync.invoice_runner._update_state"):
+
+        stats = run_invoice_sync(BASE_CFG)
+
+    assert stats["successes"] == 1
+    call_args = mock_update_fn.call_args
+    assert call_args[0][1]["dealstage"] == "1012054848"  # Effort Biz's Won stage
+    assert "pipeline" not in call_args[0][1]
+
+
+def test_run_invoice_sync_vo_to_wo_unmapped_pipeline_fails():
+    """A deal in a pipeline not present in the mapping table is skipped as a failure."""
+    transition = _make_transition("INV-1c", TRANSITION_VO_WO)
+    mock_update_fn = MagicMock(return_value={"id": "deal-1"})
+    mock_hs_instance = MagicMock()
+    mock_hs_instance.get_deal.return_value = {
+        "pipeline": "999999999", "dealstage": "some_earlier_stage"
+    }
+
+    with patch("sync.invoice_runner.bigquery.Client"), \
+         patch("sync.invoice_runner.HubSpotClient", return_value=mock_hs_instance), \
+         patch("sync.invoice_runner.make_retrying_update_deal", return_value=mock_update_fn), \
+         patch("sync.invoice_runner._fetch_transitions", return_value=[transition]), \
+         patch("sync.invoice_runner._resolve_deal_ids", return_value=[transition]), \
+         patch("sync.invoice_runner._update_state"):
+
+        stats = run_invoice_sync(BASE_CFG)
+
+    assert stats["failures"] == 1
+    assert stats["successes"] == 0
+    mock_update_fn.assert_not_called()
 
 
 def test_run_invoice_sync_wo_to_in_success():
@@ -181,9 +233,13 @@ def test_run_invoice_sync_no_deal_id_counts_as_failure():
 def test_run_invoice_sync_hubspot_error_counts_as_failure():
     transition = _make_transition("INV-4", TRANSITION_VO_WO)
     mock_update_fn = MagicMock(side_effect=Exception("HubSpot 500"))
+    mock_hs_instance = MagicMock()
+    mock_hs_instance.get_deal.return_value = {
+        "pipeline": "691581097", "dealstage": "some_earlier_stage"
+    }
 
     with patch("sync.invoice_runner.bigquery.Client"), \
-         patch("sync.invoice_runner.HubSpotClient"), \
+         patch("sync.invoice_runner.HubSpotClient", return_value=mock_hs_instance), \
          patch("sync.invoice_runner.make_retrying_update_deal", return_value=mock_update_fn), \
          patch("sync.invoice_runner._fetch_transitions", return_value=[transition]), \
          patch("sync.invoice_runner._resolve_deal_ids", return_value=[transition]), \
