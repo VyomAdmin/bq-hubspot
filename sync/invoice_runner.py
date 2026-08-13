@@ -38,6 +38,7 @@ PIPELINE_WON_STAGES: dict[str, str] = {
     "741469619": "1078337966",  # DG&C -> Closed Won
     "781108337": "1141341448",  # Dealer Kiosk -> Closed Won
     "916011920": "1396335939",  # DGNC-OSA -> Closed Won
+    "922793032": "1409293580",  # Previous Customers 2026 -> Won
 }
 
 
