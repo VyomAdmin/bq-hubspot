@@ -4,7 +4,8 @@ Invoice status transition sync: BigQuery invoices_unique_view → HubSpot Deals.
 Detects two transitions every 5-minute poll:
   VO → WO : set deal stage to the won-like stage of the deal's current pipeline
             (see PIPELINE_WON_STAGES) — the pipeline itself is never changed
-  WO → IN : set status_code__c = current UTC ISO timestamp (Install Completed)
+  →  IN  : set status_code__c = Install Completed, for an invoice whose
+            previous status was any of INSTALL_PRIOR_STATUSES (WO, QO, LE)
 
 Deals are looked up via omega_job__c = invoices_unique_view.id.
 """
@@ -24,6 +25,19 @@ logger = logging.getLogger(__name__)
 
 TRANSITION_VO_WO = "QO_TO_WO"
 TRANSITION_WO_IN = "WO_TO_IN"
+
+# Prior statuses that mean "install completed" once the invoice reaches IN.
+#
+# Jobs do not all travel QO→WO→IN. Measured against production 2026-09-17, 840
+# completed installs had never reached HubSpot because their previous status was
+# not WO:
+#     QO → IN   386 rows
+#     LE → IN   249 rows
+#     WO → IN   205 rows   (already detected; stuck for a separate reason)
+# A pair that is not listed here is never detected and never retried —
+# _seed_new_invoices only records a status, it never fires a transition — so an
+# unlisted route to IN is lost silently and permanently.
+INSTALL_PRIOR_STATUSES = ("WO", "QO", "LE")
 
 # Maps each HubSpot deal pipeline ID to its "won-like" deal stage ID.
 # A deal is moved to the won stage of whichever pipeline it currently sits
@@ -164,6 +178,7 @@ def _fetch_transitions(bq: bigquery.Client, cfg: Config) -> list[dict]:
     view = _fqt(cfg.invoice_project, cfg.invoice_dataset, cfg.invoice_view)
     state = _fqt(cfg.invoice_project, cfg.invoice_dataset, cfg.invoice_state_table)
 
+    install_priors = ", ".join(f"'{s}'" for s in INSTALL_PRIOR_STATUSES)
     query = f"""
         SELECT
           v.id                AS invoice_id,
@@ -171,14 +186,15 @@ def _fetch_transitions(bq: bigquery.Client, cfg: Config) -> list[dict]:
           v.status            AS current_status,
           CASE
             WHEN s.last_known_status = 'QO' AND v.status = 'WO' THEN '{TRANSITION_VO_WO}'
-            WHEN s.last_known_status = 'WO' AND v.status = 'IN' THEN '{TRANSITION_WO_IN}'
+            WHEN s.last_known_status IN ({install_priors}) AND v.status = 'IN'
+              THEN '{TRANSITION_WO_IN}'
           END                 AS transition,
           s.hubspot_deal_id
         FROM {view} v
         INNER JOIN {state} s ON CAST(v.id AS STRING) = s.id
         WHERE
           (s.last_known_status = 'QO' AND v.status = 'WO')
-          OR (s.last_known_status = 'WO' AND v.status = 'IN')
+          OR (s.last_known_status IN ({install_priors}) AND v.status = 'IN')
         ORDER BY v.id
     """
     logger.info("Fetching invoice transitions")

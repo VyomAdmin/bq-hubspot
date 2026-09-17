@@ -50,7 +50,7 @@ def sync_handler():
 def invoice_sync_handler():
     """
     Triggered by Cloud Scheduler every 5 minutes.
-    Detects VO→WO and WO→IN transitions in invoices_unique_view and
+    Detects QO→WO and (WO|QO|LE)→IN transitions in invoices_unique_view and
     pushes the corresponding updates to HubSpot deals.
     """
     from google.cloud import bigquery
